@@ -14,7 +14,7 @@
 // these constants won't change:
 const int ledPin = 12;      // LED connected to digital pin 12
 const int piezoSensor = A0; // the piezo is connected to analog pin 0
-const int panic = 500;  // above this level, max brightness rainbow
+const int panic = 800;  // above this level, max brightness rainbow
 const int passive = 60; //below this level reduce brightness and slowly cycle colours
 const int timeDelay = 100; //don't change the light effect too frequently
 String prevReaction;
@@ -81,8 +81,7 @@ void loop() {
 
   if((currentMillis - changeDelay) > lastChange){
 
-    // Update the String.
-    LedString.Update();
+
 
     lastChange = currentMillis;
 
@@ -93,6 +92,8 @@ void loop() {
         LedString.ActivePattern = FADE;
         LedString.Interval = 300;
         changeDelay = 50;
+        // Update the String.
+        LedString.Update();
 
     }
     else if(sensorReading >= panic) //omg too much
@@ -103,8 +104,10 @@ void loop() {
         Serial.print(sensorReading);
         Serial.print("\t PANIC");
         Serial.println("");
-        delay(5000);
-        changeDelay = 2000;
+        // Update the String.
+        LedString.Update();
+        // delay(5000);
+        changeDelay = 5000;
     }
     else  // things are occurring and I don't know what I think about that
     {
@@ -119,6 +122,8 @@ void loop() {
         // Serial.print(variableSpeed);
         // Serial.println("");
         LedString.Interval = variableSpeed;
+        // Update the String.
+        LedString.Update();
 
     }
   }
