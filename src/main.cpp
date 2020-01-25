@@ -1,45 +1,4 @@
-#include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
-#include <neopixel.cpp>
-/*
-  Piezo Sensor
-
-  The circuit:
-  - positive connection of the piezo attached to analog in 0
-  - negative connection of the piezo attached to ground
-  - 1 megohm resistor attached from analog in 0 to ground
-
-*/
-
-// these constants won't change:
-const int ledPin = 12;      // LED connected to digital pin 12
-const int piezoSensor = A0; // the piezo is connected to analog pin 0
-const int panic = 800;  // above this level, max brightness rainbow
-const int passive = 60; //below this level reduce brightness and slowly cycle colours
-const int timeDelay = 100; //don't change the light effect too frequently
-String prevReaction;
-int prevSaturation = 55; //use this for fading things down
-long prevHue = 55; //use this for fading things down
-
-// How many NeoPixels are attached to the Arduino?
-#define LED_COUNT 31
-
-void LedStringComplete();
-
-// Define some NeoPatterns for the two rings and the stick
-//  as well as some completion routines
-
-NeoPatterns LedString(31, 12, NEO_GRB + NEO_KHZ800, &LedStringComplete);
-
-
-// these variables will change:
-int sensorReading = 0;      // variable to store the value read from the sensor pin
-int brightness = 50;  //variable to store the brightness for reacting
-long lastChange;
-long currentMillis;
-long changeDelay = 100;
-int variableSpeed;
-//Add in some stuff to
 
 // NEOPIXEL BEST PRACTICES for most reliable operation:
 // - Add 1000 uF CAPACITOR between NeoPixel strip's + and - connections.
@@ -51,94 +10,192 @@ int variableSpeed;
 //   a LOGIC-LEVEL CONVERTER on the data line is STRONGLY RECOMMENDED.
 // (Skipping these may work OK on your workbench but can fail in the field)
 
-// Declare the NeoPixel strip object:
-// Adafruit_NeoPixel strip(LED_COUNT, ledPin, NEO_GRB + NEO_KHZ800);
+
+// set to pin connected to data input of WS8212 (NeoPixel) strip
+#define PIN         0
+
+// set to pin connected to piezo
+#define PIEZOPIN    1
+
+// any pin with analog input (used to initialize random number generator)
+#define RNDPIN      2 //use P3 (A2)
+
+// number of LEDs (NeoPixels) in your strip
+// (please note that you need 3 bytes of RAM available for each pixel)
+#define NUMPIXELS   31
+
+// max LED brightness (1 to 255) – start with low values!
+// (please note that high brightness requires a LOT of power)
+#define BRIGHTNESS  60
+
+// set to 1 to display FPS rate
+#define DEBUG       0
+
+// if true, wrap color wave over the edge (used for circular stripes)
+#define WRAP        1
+
+//below this level reduce brightness and slowly cycle colours
+#define PASSIVE 60
+
+//don't change the light effect too frequently
+#define CHANGEDELAY 1000
+
+// above this level, top speed, rainbow
+#define PANIC 800
+
+
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
+
+// we have 3 color spots (reg, green, blue) oscillating along the strip with different speeds
+
+// increase focus to get narrow spots, decrease to get wider spots
+// decrease speed to speed up, increase to slow down (it's not a delay actually)
+
+float spdr, spdg, spdb;
+float offset, speed, focus;
+
+//use these to turn off a blob and only have two colours
+bool liveR = false;
+bool liveB = true;
+bool liveG = true; //use these to turn on and off colours..
+
+long currentMillis, lastChange;
+
+int sensorReading = 0;
+
+#if DEBUG
+// track fps rate
+long nextms = 0;
+int pfps = 0, fps = 0;
+#endif
+
+// the real exponent function is too slow, so I created an approximation (only for x < 0)
+float myexp(float x) {
+  return (1.0/(1.0-(0.634-1.344*x)*x));
+}
+
 
 void setup() {
-  pinMode(ledPin, OUTPUT); // declare the ledPin as as OUTPUT
 
-  // strip.begin();           // INITIALIZE NeoPixel strip object (REQUIRED)
-  // strip.show();            // Turn OFF all pixels ASAP
-  // strip.setBrightness(brightness); // Set BRIGHTNESS to about 1/2 (max = 255)
-  //
-  // Serial.begin(9600);       // use the serial port
+  focus = 80;
+  speed = 12000;
+  liveR = false;
+  liveB = true;
+  liveG = true;
 
-  Serial.begin(115200);
+  // initialize pseudo-random number generator with some random value
+  randomSeed(analogRead(RNDPIN));
 
-    // Initialize the shiny lights
-    LedString.begin();
+  // assign random speed to each spot
+  spdr = 1.0 + random(200) / 100.0;
+  spdg = 1.0 + random(200) / 100.0;
+  spdb = 1.0 + random(200) / 100.0;
 
-    // Kick off a pattern
-    LedString.TheaterChase(LedString.Color(0,100,100), LedString.Color(0,30,50), 50);
+  // set random offset so spots start in random locations
+  offset = random(10000) / 100.0;
+
+  // initialize LED strip
+  strip.begin();
+  strip.show();
 }
 
 void loop() {
 
   currentMillis = millis();
 
-  // read the sensor and store it in the variable sensorReading
-  sensorReading = analogRead(piezoSensor);
+  //get the largest reading since last triggered
+  sensorReading = (analogRead(PIEZOPIN) > sensorReading) ? analogRead(PIEZOPIN) : sensorReading;
 
-  if((currentMillis - changeDelay) > lastChange){
+  if((currentMillis - CHANGEDELAY) > lastChange){
 
-
+    // read the sensor and store it in the variable sensorReading
+    sensorReading = analogRead(PIEZOPIN);
 
     lastChange = currentMillis;
 
     // Switch patterns depending on input thresholds
-    if(sensorReading <= passive) //just chillin
+    if(sensorReading <= PASSIVE) //just chillin
     {
-        // Switch to FADE pattern
-        LedString.ActivePattern = FADE;
-        LedString.Interval = 300;
-        changeDelay = 50;
-        // Update the String.
-        LedString.Update();
+
+      focus = 80;
+      speed = 12000;
+      liveR = false;
+      liveB = true;
+      liveG = true;
 
     }
-    else if(sensorReading >= panic) //omg too much
+    else if(sensorReading >= PANIC) //omg too much
     {
-
-        LedString.ActivePattern = RAINBOW_CYCLE;
-        LedString.Interval = 30;
-        Serial.print(sensorReading);
-        Serial.print("\t PANIC");
-        Serial.println("");
-        // Update the String.
-        LedString.Update();
-        // delay(5000);
-        changeDelay = 5000;
+      focus = 40;
+      speed = 600;
+      liveR = true;
+      liveB = true;
+      liveG = true;
     }
     else  // things are occurring and I don't know what I think about that
     {
-      changeDelay = 50;
-        LedString.ActivePattern = THEATER_CHASE;
-
-        variableSpeed = 200 - ((sensorReading * 200) / 1023); //make the speed be 0-200 depending on the reading
-        // Serial.print("variable speed");
-        // Serial.print("\t");
-        // Serial.print(sensorReading);
-        // Serial.print("\t");
-        // Serial.print(variableSpeed);
-        // Serial.println("");
-        LedString.Interval = variableSpeed;
-        // Update the String.
-        LedString.Update();
+      focus = 80;
+      speed = 8000 - ((sensorReading * 8000) / 1023); //make the speed be 0-200 depending on the reading;
+      // liveR = (rand() % 100) < 33.33;
+      // liveB = (rand() % 100) < 33.33;
+      // liveG = (rand() % 100) < 33.33;
 
     }
   }
 
+  // use real time to recalculate position of each color spot
+  long ms = millis();
+  // scale time to float value
+  float m = offset + (float)ms/speed;
+  // add some non-linearity
+  m = m - 42.5*cos(m/552.0) - 6.5*cos(m/142.0);
 
+  // recalculate position of each spot (measured on a scale of 0 to 1)
+  float posr = 0.15 + 0.55*sin(m*spdr);
+  float posg = 0.50 + 0.65*sin(m*spdg);
+  float posb = 0.85 + 0.75*sin(m*spdb);
 
-}
+  // now iterate over each pixel and calculate it's color
+  for (int i=0; i<NUMPIXELS; i++) {
+    // pixel position on a scale from 0.0 to 1.0
+    float ppos = (float)i / NUMPIXELS;
 
-//------------------------------------------------------------
-//Completion Routines - get called on completion of a pattern
-//------------------------------------------------------------
+    // distance from this pixel to the center of each color spot
+    float dr = ppos-posr;
+    float dg = ppos-posg;
+    float db = ppos-posb;
+#if WRAP
+    dr = dr - floor(dr + 0.5);
+    dg = dg - floor(dg + 0.5);
+    db = db - floor(db + 0.5);
+#endif
 
-// Stick Completion Callback
-void LedStringComplete()
-{
-    // Random color change for next scan
-    LedString.Color1 = LedString.Wheel(random(255));
+    // set each color component from 0 to max BRIGHTNESS, according to Gaussian distribution
+    // strip.setPixelColor(i,
+    //   constrain(BRIGHTNESS*myexp(-focus*dr*dr),0,BRIGHTNESS),
+    //   constrain(BRIGHTNESS*myexp(-focus*dg*dg),0,BRIGHTNESS),
+    //   constrain(BRIGHTNESS*myexp(-focus*db*db),0,BRIGHTNESS)
+    //   );
+    strip.setPixelColor(i,
+      liveR ? constrain(BRIGHTNESS*myexp(-focus*dr*dr),0,BRIGHTNESS) : 0,
+      liveB ? constrain(BRIGHTNESS*myexp(-focus*dg*dg),0,BRIGHTNESS) : 0,
+      liveG ? constrain(BRIGHTNESS*myexp(-focus*db*db),0,BRIGHTNESS) : 0
+    );
+  }
+
+#if DEBUG
+  // keep track of FPS rate
+  fps++;
+  if (ms>nextms) {
+    // 1 second passed – reset counter
+    nextms = ms + 1000;
+    pfps = fps;
+    fps = 0;
+  }
+  // show FPS rate by setting one pixel to white
+  strip.setPixelColor(pfps,BRIGHTNESS,BRIGHTNESS,BRIGHTNESS);
+#endif
+
+  // send data to LED strip
+  strip.show();
 }
